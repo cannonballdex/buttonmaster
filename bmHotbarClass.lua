@@ -701,6 +701,18 @@ function BMHotbarClass:RenderTabContextMenu()
             }
 
             ImGui.Separator()
+            local _, btnHeight = self:GetButtonDims()
+            ImGui.Text("Button Width:")
+            local btnWidth, btnWidthChanged = ImGui.SliderInt("##btnWidth_" .. self.id,
+                math.max(BMSettings:GetCharacterWindow(self.id).ButtonWidth or btnHeight, btnHeight), btnHeight, 400, "%d px")
+            if btnWidthChanged then
+                BMSettings:GetCharacterWindow(self.id).ButtonWidth = btnWidth > btnHeight and btnWidth or nil
+                self.buttonSizeDirty = true
+            end
+            if ImGui.IsItemDeactivatedAfterEdit() then
+                BMSettings:SaveSettings(true)
+            end
+
             ImGui.Text("Background Opacity:")
             local opacity, opacityChanged = ImGui.SliderFloat("##winOpacity_" .. self.id,
                 BMSettings:GetCharacterWindow(self.id).Opacity or 1.0, 0.0, 1.0, "%.2f")
@@ -993,7 +1005,7 @@ function BMHotbarClass:RenderButtons(Set, searchText)
         self:RecalculateVisibleButtons(Set)
     end
 
-    local btnSize = (BMSettings:GetCharacterWindow(self.id).ButtonSize or 6) * 10
+    local btnWidth, btnSize = self:GetButtonDims()
 
     local renderButtonCount = self.visibleButtonCount
 
@@ -1020,7 +1032,7 @@ function BMHotbarClass:RenderButtons(Set, searchText)
             ImGui.PushID(buttonID)
             clicked = BMButtonHandlers.Render(button, btnSize, showLabel, (BMSettings:GetCharacterWindow(self.id).Font or 10) / 10,
                 BMSettings:GetCharacterWindow(self.id).AdvTooltips, BMSettings:GetCharacterWindow(self.id).ButtonOpacity,
-                BMSettings:GetCharacterWindow(self.id).TextOpacity)
+                BMSettings:GetCharacterWindow(self.id).TextOpacity, btnWidth)
             ImGui.PopID()
             -- TODO Move this to button config class and out of the UI thread.
             if clicked then
@@ -1034,7 +1046,7 @@ function BMHotbarClass:RenderButtons(Set, searchText)
                 if ImGui.BeginDragDropSource() then
                     self.currentDnDData = { Set = Set, Index = ButtonIndex, }
                     ImGui.SetDragDropPayload("BTN", self.id)
-                    ImGui.Button(button.Label, btnSize, btnSize)
+                    ImGui.Button(button.Label, btnWidth, btnSize)
                     ImGui.EndDragDropSource()
                 end
                 if ImGui.BeginDragDropTarget() then
@@ -1082,6 +1094,12 @@ function BMHotbarClass:RenderButtons(Set, searchText)
     ImGui.PopStyleVar(1)
 end
 
+---@return number, number # button width, button height
+function BMHotbarClass:GetButtonDims()
+    local height = (BMSettings:GetCharacterWindow(self.id).ButtonSize or 6) * 10
+    return math.max(BMSettings:GetCharacterWindow(self.id).ButtonWidth or height, height), height
+end
+
 function BMHotbarClass:RecalculateVisibleButtons(Set)
     self.buttonSizeDirty = false
 
@@ -1096,8 +1114,8 @@ function BMHotbarClass:RecalculateVisibleButtons(Set)
     local style = ImGui.GetStyle()                -- this will get us ItemSpacing.x which is the amount of space between buttons
 
     -- global button configs
-    local btnSize = (BMSettings:GetCharacterWindow(self.id).ButtonSize or 6) * 10
-    self.cachedCols = math.floor((self.lastButtonPageWidth - cursorX) / (btnSize + style.ItemSpacing.x))
+    local btnWidth, btnSize = self:GetButtonDims()
+    self.cachedCols = math.max(math.floor((self.lastButtonPageWidth - cursorX) / (btnWidth + style.ItemSpacing.x)), 1)
     self.cachedRows = math.floor((self.lastButtonPageHeight - cursorY) / (btnSize + style.ItemSpacing.y))
 
     local count = 100

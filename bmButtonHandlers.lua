@@ -112,9 +112,10 @@ end
 
 ---@param Button table # BMButtonConfig
 ---@param cursorScreenPos table # cursor position on screen
----@param size number # button size
+---@param width number # button width
+---@param size number # button height
 ---@param opacity number # button opacity 0-1
-function BMButtonHandlers.RenderButtonCooldown(Button, cursorScreenPos, size, opacity)
+function BMButtonHandlers.RenderButtonCooldown(Button, cursorScreenPos, width, size, opacity)
     local currentTimer = BMButtonHandlers.GetTimeMS()
     local updateRate = Button.UpdateRate or 0
 
@@ -131,23 +132,29 @@ function BMButtonHandlers.RenderButtonCooldown(Button, cursorScreenPos, size, op
 
     local start_angle = (1.5 * math.pi)
     local end_angle = math.pi * ((2 * ratio) - 0.5)
-    local center = ImVec2(cursorScreenPos.x + (size / 2), cursorScreenPos.y + (size / 2))
+    local center = ImVec2(cursorScreenPos.x + (width / 2), cursorScreenPos.y + (size / 2))
 
     local draw_list = ImGui.GetWindowDrawList()
-    draw_list:PushClipRect(cursorScreenPos, ImVec2(cursorScreenPos.x + size, cursorScreenPos.y + size), true)
+    draw_list:PushClipRect(cursorScreenPos, ImVec2(cursorScreenPos.x + width, cursorScreenPos.y + size), true)
     draw_list:PathLineTo(center)
-    draw_list:PathArcTo(center, size, start_angle, end_angle, 0)
+    draw_list:PathArcTo(center, math.max(width, size), start_angle, end_angle, 0)
     draw_list:PathFillConvex(ImGui.GetColorU32(0.8, 0.02, 0.02, 0.75 * opacity))
     draw_list:PopClipRect()
 end
 
 ---@param Button table # BMButtonConfig
 ---@param cursorScreenPos ImVec2 # cursor position on screen
----@param size number # button size
+---@param width number # button width
+---@param size number # button height
 ---@param opacity number # button opacity 0-1
-function BMButtonHandlers.RenderButtonIcon(Button, cursorScreenPos, size, opacity)
+function BMButtonHandlers.RenderButtonIcon(Button, cursorScreenPos, width, size, opacity)
     if not Button.Icon and (not Button.IconLua or Button.IconLua:len() == 0) then
-        return BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, size, 255, opacity)
+        return BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, width, size, 255, opacity)
+    end
+
+    -- wide buttons get a background behind the square icon so the rest of the button shows.
+    if width > size then
+        BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, width, size, 255, opacity)
     end
 
     local draw_list = ImGui.GetWindowDrawList()
@@ -187,10 +194,11 @@ end
 
 ---@param Button table # BMButtonConfig
 ---@param cursorScreenPos ImVec2 # cursor position on screen
----@param size number # button size
+---@param width number # button width
+---@param size number # button height
 ---@param alpha number # button alpha color
 ---@param opacity number # button opacity 0-1
-function BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, size, alpha, opacity)
+function BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, width, size, alpha, opacity)
     local draw_list = ImGui.GetWindowDrawList()
     local buttonStyle = ImGui.GetStyleColorVec4(ImGuiCol.Button)
     local Colors = btnUtils.split(Button.ButtonColorRGB, ",")
@@ -199,7 +207,7 @@ function BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, size, alpha,
         tonumber(Colors[3]) or math.floor(buttonStyle.z * 255),
         math.floor((#Colors == 0 and buttonStyle.w * 255 or alpha) * opacity))
 
-    draw_list:AddRectFilled(cursorScreenPos, ImVec2(cursorScreenPos.x + size, cursorScreenPos.y + size), buttonBGCol)
+    draw_list:AddRectFilled(cursorScreenPos, ImVec2(cursorScreenPos.x + width, cursorScreenPos.y + size), buttonBGCol)
 end
 
 ---@param Button table # BMButtonConfig
@@ -230,20 +238,55 @@ end
 
 ---@param Button table # BMButtonConfig
 ---@param cursorScreenPos ImVec2 # cursor position on screen
----@param size number # button size
----@param label string
+---@param width number # button width
+---@param size number # button height
 ---@param opacity number # label opacity 0-1
-function BMButtonHandlers.RenderButtonLabel(Button, cursorScreenPos, size, label, opacity)
+function BMButtonHandlers.RenderButtonLabel(Button, cursorScreenPos, width, size, opacity)
     local Colors = btnUtils.split(Button.TextColorRGB, ",")
     local buttonLabelCol = IM_COL32(tonumber(Colors[1]) or 255, tonumber(Colors[2]) or 255, tonumber(Colors[3]) or 255,
         math.floor(255 * opacity))
     local draw_list = ImGui.GetWindowDrawList()
 
-    BMButtonHandlers.CalcButtonTextPos(Button, size)
+    local label = BMButtonHandlers.WrapButtonLabel(Button, width)
+    BMButtonHandlers.CalcButtonTextPos(Button, label, width, size)
 
-    draw_list:PushClipRect(cursorScreenPos, ImVec2(cursorScreenPos.x + size, cursorScreenPos.y + size), true)
+    draw_list:PushClipRect(cursorScreenPos, ImVec2(cursorScreenPos.x + width, cursorScreenPos.y + size), true)
     draw_list:AddText(ImVec2(cursorScreenPos.x + (Button.labelMidX or 0), cursorScreenPos.y + (Button.labelMidY or 0)), buttonLabelCol, label)
     draw_list:PopClipRect()
+end
+
+-- Fits as many words on each line as the button width allows. Cached until the label, width or font size changes.
+---@param Button table # BMButtonConfig
+---@param width number # button width
+---@return string
+function BMButtonHandlers.WrapButtonLabel(Button, width)
+    local text = BMButtonHandlers.ResolveButtonLabel(Button, true) or ""
+    local fontSize = ImGui.GetFontSize()
+    if Button.CachedWrapText == text and Button.CachedWrapWidth == width and Button.CachedWrapFont == fontSize then
+        return Button.CachedWrapped
+    end
+
+    local maxWidth = width - 4
+    local spaceWidth = ImGui.CalcTextSize(" ")
+    local lines = {}
+    for paragraph in (text .. "\n"):gmatch("(.-)\n") do
+        local line, lineWidth = nil, 0
+        for word in paragraph:gmatch("%S+") do
+            local wordWidth = ImGui.CalcTextSize(word)
+            if line and lineWidth + spaceWidth + wordWidth <= maxWidth then
+                line = line .. " " .. word
+                lineWidth = lineWidth + spaceWidth + wordWidth
+            else
+                if line then table.insert(lines, line) end
+                line, lineWidth = word, wordWidth
+            end
+        end
+        table.insert(lines, line or "")
+    end
+
+    Button.CachedWrapText, Button.CachedWrapWidth, Button.CachedWrapFont = text, width, fontSize
+    Button.CachedWrapped = table.concat(lines, "\n")
+    return Button.CachedWrapped
 end
 
 ---@param cursorScreenPos ImVec2 # cursor position on screen
@@ -277,9 +320,9 @@ function BMButtonHandlers.ResolveButtonLabel(Button, leaveSpaces, cacheUpdate)
     return leaveSpaces and Button.CachedLabel or Button.CachedLabel:gsub(" ", "\n")
 end
 
-function BMButtonHandlers.CalcButtonTextPos(Button, size)
-    local label_x, label_y = ImGui.CalcTextSize(BMButtonHandlers.ResolveButtonLabel(Button, false))
-    local midX, midY = math.max(math.floor((size - label_x) / 2), 0), math.floor((size - label_y) / 2)
+function BMButtonHandlers.CalcButtonTextPos(Button, label, width, size)
+    local label_x, label_y = ImGui.CalcTextSize(label)
+    local midX, midY = math.max(math.floor((width - label_x) / 2), 0), math.floor((size - label_y) / 2)
     if midX ~= Button.labelMidX or midY ~= Button.labelMidY then
         Button.labelMidX, Button.labelMidY = midX, midY
     end
@@ -292,26 +335,28 @@ end
 ---@param advTooltips boolean # enable advanced tooltips6
 ---@param opacity number? # button opacity 0-1, defaults to 1
 ---@param textOpacity number? # label opacity 0-1, defaults to 1
+---@param width number? # button width, defaults to size (square)
 ---@return boolean # clicked
-function BMButtonHandlers.Render(Button, size, renderLabel, fontScale, advTooltips, opacity, textOpacity)
+function BMButtonHandlers.Render(Button, size, renderLabel, fontScale, advTooltips, opacity, textOpacity, width)
     local evaluatedLabel = BMButtonHandlers.ResolveButtonLabel(Button) or ""
     local clicked = false
     local startTimeMS = os.clock() * 1000
     local cursorScreenPos = ImGui.GetCursorScreenPosVec()
     opacity = opacity or 1
+    width = width or size
 
-    BMButtonHandlers.RenderButtonIcon(Button, cursorScreenPos, size, opacity)
-    clicked = ImGui.Selectable('', false, ImGuiSelectableFlags.DontClosePopups, size, size)
+    BMButtonHandlers.RenderButtonIcon(Button, cursorScreenPos, width, size, opacity)
+    clicked = ImGui.Selectable('', false, ImGuiSelectableFlags.DontClosePopups, width, size)
     if ImGui.IsItemHovered() then
-        BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, size, 200, opacity)
+        BMButtonHandlers.RenderButtonRect(Button, cursorScreenPos, width, size, 200, opacity)
     end
 
-    BMButtonHandlers.RenderButtonCooldown(Button, cursorScreenPos, size, opacity)
+    BMButtonHandlers.RenderButtonCooldown(Button, cursorScreenPos, width, size, opacity)
 
     -- label and tooltip
     ImGui.SetWindowFontScale(fontScale)
     if renderLabel then
-        BMButtonHandlers.RenderButtonLabel(Button, cursorScreenPos, size, evaluatedLabel, textOpacity or 1)
+        BMButtonHandlers.RenderButtonLabel(Button, cursorScreenPos, width, size, textOpacity or 1)
     end
     BMButtonHandlers.RenderButtonTooltip(Button, evaluatedLabel, advTooltips and (Button.Cmd or nil) or nil)
     ImGui.SetWindowFontScale(1)
